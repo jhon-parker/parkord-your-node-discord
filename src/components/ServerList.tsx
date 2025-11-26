@@ -17,7 +17,7 @@ interface ServerListProps {
 
 const ServerList = ({ servers, selectedServer, onSelectServer, onCreateServer }: ServerListProps) => {
   return (
-    <div className="w-20 bg-background border-r border-border flex flex-col items-center py-4 space-y-2">
+    <>
       <ScrollArea className="flex-1 w-full">
         <div className="space-y-2 px-3">
           {servers.map((server) => (
@@ -43,7 +43,7 @@ const ServerList = ({ servers, selectedServer, onSelectServer, onCreateServer }:
       >
         <Plus className="w-6 h-6" />
       </Button>
-    </div>
+    </>
   );
 };
 
