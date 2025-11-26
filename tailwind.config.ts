@@ -57,6 +57,17 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        glow: {
+          primary: "hsl(var(--glow-primary))",
+          secondary: "hsl(var(--glow-secondary))",
+        },
+      },
+      backgroundImage: {
+        "gradient-accent": "var(--gradient-accent)",
+      },
+      boxShadow: {
+        glow: "0 0 20px hsl(var(--glow-primary) / 0.5)",
+        "glow-lg": "0 0 40px hsl(var(--glow-primary) / 0.6)",
       },
       borderRadius: {
         lg: "var(--radius)",
