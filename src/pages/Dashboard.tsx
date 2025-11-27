@@ -11,8 +11,9 @@ import DMList from "@/components/DMList";
 import CreateServerDialog from "@/components/CreateServerDialog";
 import CreateChannelDialog from "@/components/CreateChannelDialog";
 import ServerSearch from "@/components/ServerSearch";
+import ServerSettings from "@/components/ServerSettings";
+import UserSettings from "@/components/UserSettings";
 import { supabase } from "@/integrations/supabase/client";
-import { useToast } from "@/hooks/use-toast";
 
 type ViewMode = "servers" | "friends" | "dm";
 
@@ -29,7 +30,6 @@ const Dashboard = () => {
   const [showServerSearch, setShowServerSearch] = useState(false);
   const [user, setUser] = useState<any>(null);
   const navigate = useNavigate();
-  const { toast } = useToast();
 
   useEffect(() => {
     checkAuth();
@@ -58,66 +58,57 @@ const Dashboard = () => {
     if (!memberData) return;
 
     const serverIds = memberData.map((m) => m.server_id);
+    if (serverIds.length === 0) {
+      setServers([]);
+      return;
+    }
     
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("servers")
       .select("*")
       .in("id", serverIds)
       .order("created_at", { ascending: true });
 
-    if (error) {
-      toast({
-        title: "Ошибка",
-        description: "Не удалось загрузить серверы",
-        variant: "destructive",
-      });
-    } else {
-      setServers(data || []);
-      if (data && data.length > 0 && !selectedServer) {
-        setSelectedServer(data[0].id);
-      }
+    setServers(data || []);
+    if (data && data.length > 0 && !selectedServer) {
+      setSelectedServer(data[0].id);
     }
   };
 
   const fetchChannels = async (serverId: string) => {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("channels")
       .select("*")
       .eq("server_id", serverId)
       .order("created_at", { ascending: true });
 
-    if (error) {
-      toast({
-        title: "Ошибка",
-        description: "Не удалось загрузить каналы",
-        variant: "destructive",
-      });
-    } else {
-      setChannels(data || []);
-      if (data && data.length > 0 && !selectedChannel) {
-        setSelectedChannel(data[0].id);
-      }
+    setChannels(data || []);
+    if (data && data.length > 0 && !selectedChannel) {
+      setSelectedChannel(data[0].id);
     }
   };
 
   const fetchMembers = async (serverId: string) => {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("server_members")
-      .select("user_id, profiles(username)")
+      .select("user_id, profiles(username, status, avatar_url)")
       .eq("server_id", serverId)
       .limit(50);
 
-    if (error) {
-      console.error("Error fetching members:", error);
-    } else {
-      setMembers(
-        (data || []).map((member: any) => ({
-          id: member.user_id,
-          username: member.profiles?.username || "Пользователь",
-          status: "online" as const,
-        }))
-      );
-    }
+    setMembers(
+      (data || []).map((member: any) => ({
+        id: member.user_id,
+        username: member.profiles?.username || "Пользователь",
+        status: member.profiles?.status || "offline",
+        avatar_url: member.profiles?.avatar_url,
+      }))
+    );
+  };
+
+  const handleServerDeleted = () => {
+    setSelectedServer(null);
+    setSelectedChannel(null);
+    fetchServers();
   };
 
   useEffect(() => {
@@ -140,6 +131,7 @@ const Dashboard = () => {
 
   const currentServer = servers.find((s) => s.id === selectedServer);
   const currentChannel = channels.find((c) => c.id === selectedChannel);
+  const isServerOwner = currentServer?.owner_id === user?.id;
 
   if (!user) {
     return null;
@@ -175,17 +167,46 @@ const Dashboard = () => {
           onSelectServer={handleSelectServer}
           onCreateServer={() => setShowServerDialog(true)}
         />
+
+        {/* User settings at bottom */}
+        <div className="mt-auto pt-2 border-t border-border">
+          <UserSettings user={user} onProfileUpdate={() => {
+            if (selectedServer) fetchMembers(selectedServer);
+          }} />
+        </div>
       </div>
 
       {/* Middle section - channels/friends/DM list */}
       {viewMode === "servers" && selectedServer && (
-        <ChannelList
-          serverName={currentServer?.name || "Сервер"}
-          channels={channels}
-          selectedChannel={selectedChannel}
-          onSelectChannel={setSelectedChannel}
-          onCreateChannel={() => setShowChannelDialog(true)}
-        />
+        <div className="w-60 bg-secondary border-r border-border flex flex-col">
+          <div className="h-16 border-b border-border flex items-center justify-between px-4">
+            <h2 className="font-bold text-foreground truncate">{currentServer?.name || "Сервер"}</h2>
+            {isServerOwner && (
+              <ServerSettings
+                server={currentServer}
+                channels={channels}
+                members={members}
+                isOwner={isServerOwner}
+                onUpdate={() => {
+                  fetchServers();
+                  if (selectedServer) {
+                    fetchChannels(selectedServer);
+                    fetchMembers(selectedServer);
+                  }
+                }}
+                onDelete={handleServerDeleted}
+              />
+            )}
+          </div>
+          <ChannelList
+            serverName={currentServer?.name || "Сервер"}
+            channels={channels}
+            selectedChannel={selectedChannel}
+            onSelectChannel={setSelectedChannel}
+            onCreateChannel={() => setShowChannelDialog(true)}
+            showHeader={false}
+          />
+        </div>
       )}
 
       {viewMode === "friends" && (

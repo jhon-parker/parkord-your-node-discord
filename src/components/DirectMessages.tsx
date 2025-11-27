@@ -3,6 +3,8 @@ import { Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import MediaUpload from "@/components/MediaUpload";
+import UserStatusIndicator from "@/components/UserStatusIndicator";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -12,8 +14,10 @@ interface Message {
   sender_id: string;
   receiver_id: string;
   created_at: string;
+  media_url?: string;
   sender?: {
     username: string;
+    status?: string;
   };
 }
 
@@ -25,8 +29,10 @@ interface DirectMessagesProps {
 const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
+  const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string>("");
+  const [friendStatus, setFriendStatus] = useState<string>("offline");
   const { toast } = useToast();
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -37,6 +43,7 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
   useEffect(() => {
     if (currentUserId) {
       fetchMessages();
+      fetchFriendStatus();
       subscribeToMessages();
     }
   }, [friendId, currentUserId]);
@@ -44,6 +51,15 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
   const getCurrentUser = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (user) setCurrentUserId(user.id);
+  };
+
+  const fetchFriendStatus = async () => {
+    const { data } = await supabase
+      .from("profiles")
+      .select("status")
+      .eq("id", friendId)
+      .maybeSingle();
+    if (data) setFriendStatus(data.status || "offline");
   };
 
   const fetchMessages = async () => {
@@ -108,13 +124,14 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMessage.trim()) return;
+    if (!newMessage.trim() && !mediaUrl) return;
 
     setLoading(true);
     const { error } = await supabase.from("direct_messages").insert({
-      content: newMessage,
+      content: newMessage || (mediaUrl ? "📎 Медиафайл" : ""),
       sender_id: currentUserId,
       receiver_id: friendId,
+      media_url: mediaUrl,
     });
 
     if (error) {
@@ -125,6 +142,7 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
       });
     } else {
       setNewMessage("");
+      setMediaUrl(null);
     }
     setLoading(false);
   };
@@ -137,10 +155,21 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
     <div className="flex-1 flex flex-col bg-background">
       <div className="h-16 border-b border-border flex items-center px-4">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">
-            {friendName[0].toUpperCase()}
+          <div className="relative">
+            <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">
+              {friendName[0].toUpperCase()}
+            </div>
+            <UserStatusIndicator
+              status={friendStatus}
+              className="absolute -bottom-0.5 -right-0.5 border-2 border-background"
+            />
           </div>
-          <h3 className="font-bold text-foreground">{friendName}</h3>
+          <div>
+            <h3 className="font-bold text-foreground">{friendName}</h3>
+            <span className="text-xs text-muted-foreground">
+              {friendStatus === "online" ? "В сети" : friendStatus === "idle" ? "Не активен" : friendStatus === "dnd" ? "Не беспокоить" : "Не в сети"}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -154,9 +183,7 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
                 className={`flex gap-3 ${isSent ? "flex-row-reverse" : ""}`}
               >
                 <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold flex-shrink-0">
-                  {isSent
-                    ? "Я"
-                    : friendName[0].toUpperCase()}
+                  {isSent ? "Я" : friendName[0].toUpperCase()}
                 </div>
                 <div className={`flex flex-col ${isSent ? "items-end" : "items-start"}`}>
                   <div className="flex items-baseline gap-2">
@@ -178,6 +205,14 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
                     }`}
                   >
                     {message.content}
+                    {message.media_url && (
+                      <img
+                        src={message.media_url}
+                        alt="Media"
+                        className="mt-2 max-w-full rounded cursor-pointer hover:opacity-90"
+                        onClick={() => window.open(message.media_url, "_blank")}
+                      />
+                    )}
                   </div>
                 </div>
               </div>
@@ -188,7 +223,13 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
       </ScrollArea>
 
       <form onSubmit={handleSendMessage} className="p-4">
+        {mediaUrl && (
+          <div className="mb-2 p-2 bg-secondary rounded-lg border border-border">
+            <img src={mediaUrl} alt="Preview" className="max-h-32 rounded" />
+          </div>
+        )}
         <div className="flex gap-2">
+          <MediaUpload onUpload={setMediaUrl} disabled={loading} />
           <Input
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}

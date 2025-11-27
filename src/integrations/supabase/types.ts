@@ -54,6 +54,7 @@ export type Database = {
           content: string
           created_at: string
           id: string
+          media_url: string | null
           read: boolean
           receiver_id: string
           sender_id: string
@@ -63,6 +64,7 @@ export type Database = {
           content: string
           created_at?: string
           id?: string
+          media_url?: string | null
           read?: boolean
           receiver_id: string
           sender_id: string
@@ -72,6 +74,7 @@ export type Database = {
           content?: string
           created_at?: string
           id?: string
+          media_url?: string | null
           read?: boolean
           receiver_id?: string
           sender_id?: string
@@ -142,6 +145,7 @@ export type Database = {
           content: string
           created_at: string
           id: string
+          media_url: string | null
           updated_at: string
           user_id: string
         }
@@ -150,6 +154,7 @@ export type Database = {
           content: string
           created_at?: string
           id?: string
+          media_url?: string | null
           updated_at?: string
           user_id: string
         }
@@ -158,6 +163,7 @@ export type Database = {
           content?: string
           created_at?: string
           id?: string
+          media_url?: string | null
           updated_at?: string
           user_id?: string
         }
@@ -181,26 +187,84 @@ export type Database = {
       profiles: {
         Row: {
           avatar_url: string | null
+          bio: string | null
           created_at: string
           id: string
+          last_seen: string | null
+          status: string | null
           updated_at: string
           username: string
         }
         Insert: {
           avatar_url?: string | null
+          bio?: string | null
           created_at?: string
           id: string
+          last_seen?: string | null
+          status?: string | null
           updated_at?: string
           username: string
         }
         Update: {
           avatar_url?: string | null
+          bio?: string | null
           created_at?: string
           id?: string
+          last_seen?: string | null
+          status?: string | null
           updated_at?: string
           username?: string
         }
         Relationships: []
+      }
+      server_bans: {
+        Row: {
+          banned_by: string
+          created_at: string
+          id: string
+          reason: string | null
+          server_id: string
+          user_id: string
+        }
+        Insert: {
+          banned_by: string
+          created_at?: string
+          id?: string
+          reason?: string | null
+          server_id: string
+          user_id: string
+        }
+        Update: {
+          banned_by?: string
+          created_at?: string
+          id?: string
+          reason?: string | null
+          server_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "server_bans_banned_by_fkey"
+            columns: ["banned_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "server_bans_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "server_bans_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       server_members: {
         Row: {
@@ -243,6 +307,7 @@ export type Database = {
           created_at: string
           icon: string | null
           id: string
+          is_private: boolean | null
           name: string
           owner_id: string
           updated_at: string
@@ -251,6 +316,7 @@ export type Database = {
           created_at?: string
           icon?: string | null
           id?: string
+          is_private?: boolean | null
           name: string
           owner_id: string
           updated_at?: string
@@ -259,6 +325,7 @@ export type Database = {
           created_at?: string
           icon?: string | null
           id?: string
+          is_private?: boolean | null
           name?: string
           owner_id?: string
           updated_at?: string
