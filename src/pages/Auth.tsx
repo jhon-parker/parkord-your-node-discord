@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -12,11 +13,22 @@ const Auth = () => {
   const [password, setPassword] = useState("");
   const [username, setUsername] = useState("");
   const [loading, setLoading] = useState(false);
+  const [notRobot, setNotRobot] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!isLogin && !notRobot) {
+      toast({
+        title: "Ошибка",
+        description: "Подтвердите, что вы не робот",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -101,6 +113,19 @@ const Auth = () => {
               className="bg-secondary border-border"
             />
           </div>
+
+          {!isLogin && (
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="notRobot"
+                checked={notRobot}
+                onCheckedChange={(checked) => setNotRobot(checked === true)}
+              />
+              <Label htmlFor="notRobot" className="text-sm cursor-pointer">
+                Я не робот
+              </Label>
+            </div>
+          )}
 
           <Button
             type="submit"

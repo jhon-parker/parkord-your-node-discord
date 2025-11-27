@@ -3,6 +3,7 @@ import { Hash, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import MediaUpload from "@/components/MediaUpload";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -11,6 +12,7 @@ interface Message {
   content: string;
   user_id: string;
   created_at: string;
+  media_url?: string;
   profiles?: {
     username: string;
   };
@@ -24,6 +26,7 @@ interface ChatAreaProps {
 const ChatArea = ({ channelId, channelName }: ChatAreaProps) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
+  const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -75,7 +78,7 @@ const ChatArea = ({ channelId, channelName }: ChatAreaProps) => {
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMessage.trim()) return;
+    if (!newMessage.trim() && !mediaUrl) return;
 
     setLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
@@ -91,9 +94,10 @@ const ChatArea = ({ channelId, channelName }: ChatAreaProps) => {
     }
 
     const { error } = await supabase.from("messages").insert({
-      content: newMessage,
+      content: newMessage || (mediaUrl ? "📎 Медиафайл" : ""),
       channel_id: channelId,
       user_id: user.id,
+      media_url: mediaUrl,
     });
 
     if (error) {
@@ -104,6 +108,7 @@ const ChatArea = ({ channelId, channelName }: ChatAreaProps) => {
       });
     } else {
       setNewMessage("");
+      setMediaUrl(null);
     }
     setLoading(false);
   };
@@ -139,6 +144,14 @@ const ChatArea = ({ channelId, channelName }: ChatAreaProps) => {
                   </span>
                 </div>
                 <p className="text-foreground mt-1">{message.content}</p>
+                {message.media_url && (
+                  <img
+                    src={message.media_url}
+                    alt="Media"
+                    className="mt-2 max-w-md rounded-lg cursor-pointer hover:opacity-90"
+                    onClick={() => window.open(message.media_url, "_blank")}
+                  />
+                )}
               </div>
             </div>
           ))}
@@ -147,7 +160,13 @@ const ChatArea = ({ channelId, channelName }: ChatAreaProps) => {
       </ScrollArea>
 
       <form onSubmit={handleSendMessage} className="p-4">
+        {mediaUrl && (
+          <div className="mb-2 p-2 bg-secondary rounded-lg border border-border">
+            <img src={mediaUrl} alt="Preview" className="max-h-32 rounded" />
+          </div>
+        )}
         <div className="flex gap-2">
+          <MediaUpload onUpload={setMediaUrl} disabled={loading} />
           <Input
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}

@@ -1,4 +1,4 @@
-import { Hash, Settings, Plus } from "lucide-react";
+import { Hash, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -14,6 +14,7 @@ interface ChannelListProps {
   selectedChannel: string | null;
   onSelectChannel: (channelId: string) => void;
   onCreateChannel: () => void;
+  showHeader?: boolean;
 }
 
 const ChannelList = ({
@@ -22,15 +23,15 @@ const ChannelList = ({
   selectedChannel,
   onSelectChannel,
   onCreateChannel,
+  showHeader = true,
 }: ChannelListProps) => {
   return (
-    <div className="w-60 bg-secondary border-r border-border flex flex-col">
-      <div className="h-16 border-b border-border flex items-center justify-between px-4">
-        <h2 className="font-bold text-foreground">{serverName}</h2>
-        <Button size="icon" variant="ghost">
-          <Settings className="w-5 h-5" />
-        </Button>
-      </div>
+    <div className={showHeader ? "w-60 bg-secondary border-r border-border flex flex-col" : "flex-1 flex flex-col"}>
+      {showHeader && (
+        <div className="h-16 border-b border-border flex items-center justify-between px-4">
+          <h2 className="font-bold text-foreground">{serverName}</h2>
+        </div>
+      )}
 
       <ScrollArea className="flex-1">
         <div className="p-2 space-y-1">
