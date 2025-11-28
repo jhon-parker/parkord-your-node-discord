@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import MediaUpload from "@/components/MediaUpload";
+import MediaPreview from "@/components/MediaPreview";
+import MessageActions from "@/components/MessageActions";
 import UserStatusIndicator from "@/components/UserStatusIndicator";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -15,10 +17,6 @@ interface Message {
   receiver_id: string;
   created_at: string;
   media_url?: string;
-  sender?: {
-    username: string;
-    status?: string;
-  };
 }
 
 interface DirectMessagesProps {
@@ -33,6 +31,8 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
   const [loading, setLoading] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string>("");
   const [friendStatus, setFriendStatus] = useState<string>("offline");
+  const [friendAvatar, setFriendAvatar] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const { toast } = useToast();
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -43,8 +43,9 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
   useEffect(() => {
     if (currentUserId) {
       fetchMessages();
-      fetchFriendStatus();
-      subscribeToMessages();
+      fetchFriendProfile();
+      const unsub = subscribeToMessages();
+      return unsub;
     }
   }, [friendId, currentUserId]);
 
@@ -53,19 +54,22 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
     if (user) setCurrentUserId(user.id);
   };
 
-  const fetchFriendStatus = async () => {
+  const fetchFriendProfile = async () => {
     const { data } = await supabase
       .from("profiles")
-      .select("status")
+      .select("status, avatar_url")
       .eq("id", friendId)
       .maybeSingle();
-    if (data) setFriendStatus(data.status || "offline");
+    if (data) {
+      setFriendStatus(data.status || "offline");
+      setFriendAvatar(data.avatar_url);
+    }
   };
 
   const fetchMessages = async () => {
     const { data, error } = await supabase
       .from("direct_messages")
-      .select("*, sender:profiles!direct_messages_sender_id_fkey(username)")
+      .select("*")
       .or(
         `and(sender_id.eq.${currentUserId},receiver_id.eq.${friendId}),and(sender_id.eq.${friendId},receiver_id.eq.${currentUserId})`
       )
@@ -98,20 +102,17 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
       .on(
         "postgres_changes",
         {
-          event: "INSERT",
+          event: "*",
           schema: "public",
           table: "direct_messages",
         },
         (payload) => {
-          const newMsg = payload.new as Message;
+          const msg = payload.new as Message;
           if (
-            (newMsg.sender_id === currentUserId && newMsg.receiver_id === friendId) ||
-            (newMsg.sender_id === friendId && newMsg.receiver_id === currentUserId)
+            (msg?.sender_id === currentUserId && msg?.receiver_id === friendId) ||
+            (msg?.sender_id === friendId && msg?.receiver_id === currentUserId)
           ) {
-            setMessages((prev) => [...prev, newMsg]);
-            if (newMsg.sender_id === friendId) {
-              markAsRead();
-            }
+            fetchMessages();
           }
         }
       )
@@ -128,7 +129,7 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
 
     setLoading(true);
     const { error } = await supabase.from("direct_messages").insert({
-      content: newMessage || (mediaUrl ? "📎 Медиафайл" : ""),
+      content: newMessage.trim(),
       sender_id: currentUserId,
       receiver_id: friendId,
       media_url: mediaUrl,
@@ -151,14 +152,22 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  const isMediaFile = (url: string) => {
+    return url?.match(/\.(jpg|jpeg|png|gif|webp|bmp|mp4|webm|ogg|mov)(\?|$)/i);
+  };
+
   return (
     <div className="flex-1 flex flex-col bg-background">
       <div className="h-16 border-b border-border flex items-center px-4">
         <div className="flex items-center gap-3">
           <div className="relative">
-            <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">
-              {friendName[0].toUpperCase()}
-            </div>
+            {friendAvatar ? (
+              <img src={friendAvatar} alt={friendName} className="w-10 h-10 rounded-full object-cover" />
+            ) : (
+              <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">
+                {friendName[0].toUpperCase()}
+              </div>
+            )}
             <UserStatusIndicator
               status={friendStatus}
               className="absolute -bottom-0.5 -right-0.5 border-2 border-background"
@@ -180,38 +189,31 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
             return (
               <div
                 key={message.id}
-                className={`flex gap-3 ${isSent ? "flex-row-reverse" : ""}`}
+                className={`flex gap-3 group ${isSent ? "flex-row-reverse" : ""}`}
               >
-                <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold flex-shrink-0">
-                  {isSent ? "Я" : friendName[0].toUpperCase()}
-                </div>
+                {isSent ? (
+                  <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold flex-shrink-0">Я</div>
+                ) : friendAvatar ? (
+                  <img src={friendAvatar} alt={friendName} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+                ) : (
+                  <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold flex-shrink-0">{friendName[0].toUpperCase()}</div>
+                )}
                 <div className={`flex flex-col ${isSent ? "items-end" : "items-start"}`}>
                   <div className="flex items-baseline gap-2">
-                    <span className="font-semibold text-foreground">
-                      {isSent ? "Вы" : friendName}
-                    </span>
+                    <span className="font-semibold text-foreground">{isSent ? "Вы" : friendName}</span>
                     <span className="text-xs text-muted-foreground">
-                      {new Date(message.created_at).toLocaleTimeString("ru-RU", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
+                      {new Date(message.created_at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}
                     </span>
+                    <MessageActions messageId={message.id} content={message.content} isOwn={isSent} tableName="direct_messages" onUpdate={fetchMessages} />
                   </div>
-                  <div
-                    className={`mt-1 px-4 py-2 rounded-lg max-w-md ${
-                      isSent
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-secondary text-foreground"
-                    }`}
-                  >
-                    {message.content}
-                    {message.media_url && (
-                      <img
-                        src={message.media_url}
-                        alt="Media"
-                        className="mt-2 max-w-full rounded cursor-pointer hover:opacity-90"
-                        onClick={() => window.open(message.media_url, "_blank")}
-                      />
+                  <div className={`mt-1 px-4 py-2 rounded-lg max-w-md ${isSent ? "bg-primary text-primary-foreground" : "bg-secondary text-foreground"}`}>
+                    {message.content && <p>{message.content}</p>}
+                    {message.media_url && isMediaFile(message.media_url) && (
+                      message.media_url.match(/\.(mp4|webm|ogg|mov)(\?|$)/i) ? (
+                        <video src={message.media_url} controls className="mt-2 max-w-full rounded cursor-pointer" onClick={() => setPreviewUrl(message.media_url!)} />
+                      ) : (
+                        <img src={message.media_url} alt="Media" className="mt-2 max-w-full max-h-60 rounded cursor-pointer hover:opacity-90" onClick={() => setPreviewUrl(message.media_url!)} />
+                      )
                     )}
                   </div>
                 </div>
@@ -224,29 +226,27 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
 
       <form onSubmit={handleSendMessage} className="p-4">
         {mediaUrl && (
-          <div className="mb-2 p-2 bg-secondary rounded-lg border border-border">
-            <img src={mediaUrl} alt="Preview" className="max-h-32 rounded" />
+          <div className="mb-2 p-2 bg-secondary rounded-lg border border-border relative">
+            {mediaUrl.match(/\.(mp4|webm|ogg|mov)(\?|$)/i) ? (
+              <video src={mediaUrl} className="max-h-32 rounded" controls />
+            ) : (
+              <img src={mediaUrl} alt="Preview" className="max-h-32 rounded" />
+            )}
+            <Button type="button" size="icon" variant="secondary" className="absolute top-1 right-1 h-6 w-6" onClick={() => setMediaUrl(null)}>×</Button>
           </div>
         )}
         <div className="flex gap-2">
           <MediaUpload onUpload={setMediaUrl} disabled={loading} />
-          <Input
-            value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
-            placeholder={`Сообщение для ${friendName}`}
-            className="bg-secondary border-border"
-            disabled={loading}
-          />
-          <Button
-            type="submit"
-            size="icon"
-            className="bg-primary hover:bg-primary/90 shadow-glow"
-            disabled={loading}
-          >
+          <Input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder={`Сообщение для ${friendName}`} className="bg-secondary border-border" disabled={loading} />
+          <Button type="submit" size="icon" className="bg-primary hover:bg-primary/90 shadow-glow" disabled={loading}>
             <Send className="w-5 h-5" />
           </Button>
         </div>
       </form>
+
+      {previewUrl && (
+        <MediaPreview url={previewUrl} open={!!previewUrl} onOpenChange={(open) => !open && setPreviewUrl(null)} />
+      )}
     </div>
   );
 };

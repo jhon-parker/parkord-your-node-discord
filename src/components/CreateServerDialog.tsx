@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Lock, Globe } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -9,6 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -20,6 +22,7 @@ interface CreateServerDialogProps {
 
 const CreateServerDialog = ({ open, onOpenChange, onServerCreated }: CreateServerDialogProps) => {
   const [serverName, setServerName] = useState("");
+  const [isPrivate, setIsPrivate] = useState(false);
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
@@ -41,7 +44,8 @@ const CreateServerDialog = ({ open, onOpenChange, onServerCreated }: CreateServe
 
     const { error } = await supabase.from("servers").insert({ 
       name: serverName,
-      owner_id: user.id 
+      owner_id: user.id,
+      is_private: isPrivate,
     });
 
     if (error) {
@@ -56,6 +60,7 @@ const CreateServerDialog = ({ open, onOpenChange, onServerCreated }: CreateServe
         description: "Сервер создан!",
       });
       setServerName("");
+      setIsPrivate(false);
       onOpenChange(false);
       onServerCreated();
     }
@@ -78,6 +83,18 @@ const CreateServerDialog = ({ open, onOpenChange, onServerCreated }: CreateServe
               placeholder="Мой сервер"
               className="bg-secondary border-border"
             />
+          </div>
+          <div className="flex items-center justify-between p-3 bg-secondary rounded-lg">
+            <div className="flex items-center gap-3">
+              {isPrivate ? <Lock className="w-5 h-5 text-muted-foreground" /> : <Globe className="w-5 h-5 text-muted-foreground" />}
+              <div>
+                <Label className="text-foreground">Приватный сервер</Label>
+                <p className="text-xs text-muted-foreground">
+                  {isPrivate ? "Только по приглашению" : "Виден всем в поиске"}
+                </p>
+              </div>
+            </div>
+            <Switch checked={isPrivate} onCheckedChange={setIsPrivate} />
           </div>
         </div>
         <DialogFooter>
