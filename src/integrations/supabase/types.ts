@@ -14,32 +14,77 @@ export type Database = {
   }
   public: {
     Tables: {
-      channels: {
+      channel_categories: {
         Row: {
           created_at: string
           id: string
           name: string
+          position: number
           server_id: string
-          type: string
-          updated_at: string
         }
         Insert: {
           created_at?: string
           id?: string
           name: string
+          position?: number
           server_id: string
-          type?: string
-          updated_at?: string
         }
         Update: {
           created_at?: string
           id?: string
           name?: string
+          position?: number
+          server_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "channel_categories_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      channels: {
+        Row: {
+          category_id: string | null
+          created_at: string
+          id: string
+          name: string
+          position: number
+          server_id: string
+          type: string
+          updated_at: string
+        }
+        Insert: {
+          category_id?: string | null
+          created_at?: string
+          id?: string
+          name: string
+          position?: number
+          server_id: string
+          type?: string
+          updated_at?: string
+        }
+        Update: {
+          category_id?: string | null
+          created_at?: string
+          id?: string
+          name?: string
+          position?: number
           server_id?: string
           type?: string
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "channels_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "channel_categories"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "channels_server_id_fkey"
             columns: ["server_id"]

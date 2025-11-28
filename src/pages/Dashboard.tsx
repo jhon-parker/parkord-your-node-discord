@@ -15,7 +15,7 @@ import ServerSettings from "@/components/ServerSettings";
 import UserSettings from "@/components/UserSettings";
 import { supabase } from "@/integrations/supabase/client";
 
-type ViewMode = "servers" | "friends" | "dm";
+type ViewMode = "servers" | "friends";
 
 const Dashboard = () => {
   const [viewMode, setViewMode] = useState<ViewMode>("servers");
@@ -49,7 +49,6 @@ const Dashboard = () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    // Get servers where user is a member
     const { data: memberData } = await supabase
       .from("server_members")
       .select("server_id")
@@ -80,7 +79,7 @@ const Dashboard = () => {
       .from("channels")
       .select("*")
       .eq("server_id", serverId)
-      .order("created_at", { ascending: true });
+      .order("position", { ascending: true });
 
     setChannels(data || []);
     if (data && data.length > 0 && !selectedChannel) {
@@ -121,11 +120,11 @@ const Dashboard = () => {
   const handleSelectServer = (serverId: string) => {
     setSelectedServer(serverId);
     setSelectedChannel(null);
+    setSelectedDM(null);
     setViewMode("servers");
   };
 
   const handleStartDM = (friendId: string, friendName: string) => {
-    setViewMode("dm");
     setSelectedDM({ id: friendId, name: friendName });
   };
 
@@ -142,7 +141,10 @@ const Dashboard = () => {
       {/* Left sidebar - server/mode selection */}
       <div className="w-20 bg-background border-r border-border flex flex-col items-center py-4 space-y-2">
         <button
-          onClick={() => setViewMode("friends")}
+          onClick={() => {
+            setViewMode("friends");
+            setSelectedDM(null);
+          }}
           className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all ${
             viewMode === "friends"
               ? "bg-primary text-primary-foreground shadow-glow rounded-xl"
@@ -168,7 +170,6 @@ const Dashboard = () => {
           onCreateServer={() => setShowServerDialog(true)}
         />
 
-        {/* User settings at bottom */}
         <div className="mt-auto pt-2 border-t border-border">
           <UserSettings user={user} onProfileUpdate={() => {
             if (selectedServer) fetchMembers(selectedServer);
@@ -176,71 +177,64 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* Middle section - channels/friends/DM list */}
-      {viewMode === "servers" && selectedServer && (
-        <div className="w-60 bg-secondary border-r border-border flex flex-col">
-          <div className="h-16 border-b border-border flex items-center justify-between px-4">
-            <h2 className="font-bold text-foreground truncate">{currentServer?.name || "Сервер"}</h2>
-            {isServerOwner && (
-              <ServerSettings
-                server={currentServer}
-                channels={channels}
-                members={members}
-                isOwner={isServerOwner}
-                onUpdate={() => {
-                  fetchServers();
-                  if (selectedServer) {
-                    fetchChannels(selectedServer);
-                    fetchMembers(selectedServer);
-                  }
-                }}
-                onDelete={handleServerDeleted}
-              />
-            )}
-          </div>
-          <ChannelList
-            serverName={currentServer?.name || "Сервер"}
-            channels={channels}
-            selectedChannel={selectedChannel}
-            onSelectChannel={setSelectedChannel}
-            onCreateChannel={() => setShowChannelDialog(true)}
-            showHeader={false}
-          />
-        </div>
-      )}
-
+      {/* When in friends mode: show DM list on left, friends on right */}
       {viewMode === "friends" && (
-        <div className="w-60 bg-secondary border-r border-border">
-          <div className="h-16 border-b border-border flex items-center px-4">
-            <h2 className="font-bold text-foreground">Друзья</h2>
-          </div>
-        </div>
-      )}
-
-      {viewMode === "dm" && (
-        <DMList
-          selectedDM={selectedDM?.id || null}
-          onSelectDM={handleStartDM}
-        />
-      )}
-
-      {/* Main content area */}
-      {viewMode === "servers" && selectedChannel && (
         <>
-          <ChatArea
-            channelId={selectedChannel}
-            channelName={currentChannel?.name || "канал"}
+          <DMList
+            selectedDM={selectedDM?.id || null}
+            onSelectDM={handleStartDM}
           />
-          <MemberList members={members} />
+          {selectedDM ? (
+            <DirectMessages friendId={selectedDM.id} friendName={selectedDM.name} />
+          ) : (
+            <FriendsList onStartDM={handleStartDM} />
+          )}
         </>
       )}
 
-      {viewMode === "friends" && (
-        <FriendsList onStartDM={handleStartDM} />
-      )}
+      {/* When in servers mode */}
+      {viewMode === "servers" && selectedServer && (
+        <>
+          <div className="w-60 bg-secondary border-r border-border flex flex-col">
+            <div className="h-16 border-b border-border flex items-center justify-between px-4">
+              <h2 className="font-bold text-foreground truncate">{currentServer?.name || "Сервер"}</h2>
+              {isServerOwner && (
+                <ServerSettings
+                  server={currentServer}
+                  channels={channels}
+                  members={members}
+                  isOwner={isServerOwner}
+                  onUpdate={() => {
+                    fetchServers();
+                    if (selectedServer) {
+                      fetchChannels(selectedServer);
+                      fetchMembers(selectedServer);
+                    }
+                  }}
+                  onDelete={handleServerDeleted}
+                />
+              )}
+            </div>
+            <ChannelList
+              serverName={currentServer?.name || "Сервер"}
+              channels={channels}
+              selectedChannel={selectedChannel}
+              onSelectChannel={setSelectedChannel}
+              onCreateChannel={() => setShowChannelDialog(true)}
+              showHeader={false}
+            />
+          </div>
 
-      {viewMode === "dm" && selectedDM && (
-        <DirectMessages friendId={selectedDM.id} friendName={selectedDM.name} />
+          {selectedChannel && (
+            <>
+              <ChatArea
+                channelId={selectedChannel}
+                channelName={currentChannel?.name || "канал"}
+              />
+              <MemberList members={members} onStartDM={handleStartDM} />
+            </>
+          )}
+        </>
       )}
 
       {/* Dialogs */}
