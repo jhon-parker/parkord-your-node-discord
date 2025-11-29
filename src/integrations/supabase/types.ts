@@ -229,6 +229,45 @@ export type Database = {
           },
         ]
       }
+      pinned_messages: {
+        Row: {
+          channel_id: string
+          id: string
+          message_id: string
+          pinned_at: string
+          pinned_by: string
+        }
+        Insert: {
+          channel_id: string
+          id?: string
+          message_id: string
+          pinned_at?: string
+          pinned_by: string
+        }
+        Update: {
+          channel_id?: string
+          id?: string
+          message_id?: string
+          pinned_at?: string
+          pinned_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pinned_messages_channel_id_fkey"
+            columns: ["channel_id"]
+            isOneToOne: false
+            referencedRelation: "channels"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pinned_messages_pinned_by_fkey"
+            columns: ["pinned_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -350,6 +389,7 @@ export type Database = {
       servers: {
         Row: {
           created_at: string
+          description: string | null
           icon: string | null
           id: string
           is_private: boolean | null
@@ -359,6 +399,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          description?: string | null
           icon?: string | null
           id?: string
           is_private?: boolean | null
@@ -368,6 +409,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          description?: string | null
           icon?: string | null
           id?: string
           is_private?: boolean | null

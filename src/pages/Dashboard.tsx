@@ -14,6 +14,7 @@ import ServerSearch from "@/components/ServerSearch";
 import ServerSettings from "@/components/ServerSettings";
 import UserSettings from "@/components/UserSettings";
 import { supabase } from "@/integrations/supabase/client";
+import { useUserStatus } from "@/hooks/useUserStatus";
 
 type ViewMode = "servers" | "friends";
 
@@ -28,8 +29,11 @@ const Dashboard = () => {
   const [showServerDialog, setShowServerDialog] = useState(false);
   const [showChannelDialog, setShowChannelDialog] = useState(false);
   const [showServerSearch, setShowServerSearch] = useState(false);
+  const [showMemberList, setShowMemberList] = useState(true);
   const [user, setUser] = useState<any>(null);
   const navigate = useNavigate();
+
+  useUserStatus(user?.id || null);
 
   useEffect(() => {
     checkAuth();
@@ -49,11 +53,7 @@ const Dashboard = () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    const { data: memberData } = await supabase
-      .from("server_members")
-      .select("server_id")
-      .eq("user_id", user.id);
-
+    const { data: memberData } = await supabase.from("server_members").select("server_id").eq("user_id", user.id);
     if (!memberData) return;
 
     const serverIds = memberData.map((m) => m.server_id);
@@ -61,13 +61,8 @@ const Dashboard = () => {
       setServers([]);
       return;
     }
-    
-    const { data } = await supabase
-      .from("servers")
-      .select("*")
-      .in("id", serverIds)
-      .order("created_at", { ascending: true });
 
+    const { data } = await supabase.from("servers").select("*").in("id", serverIds).order("created_at", { ascending: true });
     setServers(data || []);
     if (data && data.length > 0 && !selectedServer) {
       setSelectedServer(data[0].id);
@@ -75,12 +70,7 @@ const Dashboard = () => {
   };
 
   const fetchChannels = async (serverId: string) => {
-    const { data } = await supabase
-      .from("channels")
-      .select("*")
-      .eq("server_id", serverId)
-      .order("position", { ascending: true });
-
+    const { data } = await supabase.from("channels").select("*").eq("server_id", serverId).order("position", { ascending: true });
     setChannels(data || []);
     if (data && data.length > 0 && !selectedChannel) {
       setSelectedChannel(data[0].id);
@@ -114,6 +104,18 @@ const Dashboard = () => {
     if (selectedServer && viewMode === "servers") {
       fetchChannels(selectedServer);
       fetchMembers(selectedServer);
+
+      // Subscribe to member status updates
+      const channel = supabase
+        .channel(`server-members:${selectedServer}`)
+        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "profiles" }, () => {
+          fetchMembers(selectedServer);
+        })
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
     }
   }, [selectedServer, viewMode]);
 
@@ -132,13 +134,10 @@ const Dashboard = () => {
   const currentChannel = channels.find((c) => c.id === selectedChannel);
   const isServerOwner = currentServer?.owner_id === user?.id;
 
-  if (!user) {
-    return null;
-  }
+  if (!user) return null;
 
   return (
     <div className="h-screen flex">
-      {/* Left sidebar - server/mode selection */}
       <div className="w-20 bg-background border-r border-border flex flex-col items-center py-4 space-y-2">
         <button
           onClick={() => {
@@ -146,9 +145,7 @@ const Dashboard = () => {
             setSelectedDM(null);
           }}
           className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all ${
-            viewMode === "friends"
-              ? "bg-primary text-primary-foreground shadow-glow rounded-xl"
-              : "bg-secondary hover:bg-secondary/80 hover:rounded-xl"
+            viewMode === "friends" ? "bg-primary text-primary-foreground shadow-glow rounded-xl" : "bg-secondary hover:bg-secondary/80 hover:rounded-xl"
           }`}
         >
           <Users className="w-6 h-6" />
@@ -163,41 +160,30 @@ const Dashboard = () => {
 
         <div className="w-full h-px bg-border my-2" />
 
-        <ServerList
-          servers={servers}
-          selectedServer={selectedServer}
-          onSelectServer={handleSelectServer}
-          onCreateServer={() => setShowServerDialog(true)}
-        />
+        <ServerList servers={servers} selectedServer={selectedServer} onSelectServer={handleSelectServer} onCreateServer={() => setShowServerDialog(true)} />
 
         <div className="mt-auto pt-2 border-t border-border">
-          <UserSettings user={user} onProfileUpdate={() => {
-            if (selectedServer) fetchMembers(selectedServer);
-          }} />
+          <UserSettings user={user} onProfileUpdate={() => { if (selectedServer) fetchMembers(selectedServer); }} />
         </div>
       </div>
 
-      {/* When in friends mode: show DM list on left, friends on right */}
       {viewMode === "friends" && (
         <>
-          <DMList
-            selectedDM={selectedDM?.id || null}
-            onSelectDM={handleStartDM}
-          />
-          {selectedDM ? (
-            <DirectMessages friendId={selectedDM.id} friendName={selectedDM.name} />
-          ) : (
-            <FriendsList onStartDM={handleStartDM} />
-          )}
+          <DMList selectedDM={selectedDM?.id || null} onSelectDM={handleStartDM} />
+          {selectedDM ? <DirectMessages friendId={selectedDM.id} friendName={selectedDM.name} /> : <FriendsList onStartDM={handleStartDM} />}
         </>
       )}
 
-      {/* When in servers mode */}
       {viewMode === "servers" && selectedServer && (
         <>
           <div className="w-60 bg-secondary border-r border-border flex flex-col">
             <div className="h-16 border-b border-border flex items-center justify-between px-4">
-              <h2 className="font-bold text-foreground truncate">{currentServer?.name || "Сервер"}</h2>
+              <div className="flex items-center gap-2">
+                {currentServer?.icon ? (
+                  <img src={currentServer.icon} alt={currentServer.name} className="w-8 h-8 rounded-full object-cover" />
+                ) : null}
+                <h2 className="font-bold text-foreground truncate">{currentServer?.name || "Сервер"}</h2>
+              </div>
               {isServerOwner && (
                 <ServerSettings
                   server={currentServer}
@@ -217,11 +203,14 @@ const Dashboard = () => {
             </div>
             <ChannelList
               serverName={currentServer?.name || "Сервер"}
+              serverId={selectedServer}
               channels={channels}
               selectedChannel={selectedChannel}
               onSelectChannel={setSelectedChannel}
               onCreateChannel={() => setShowChannelDialog(true)}
               showHeader={false}
+              isOwner={isServerOwner}
+              onUpdate={() => fetchChannels(selectedServer)}
             />
           </div>
 
@@ -230,19 +219,18 @@ const Dashboard = () => {
               <ChatArea
                 channelId={selectedChannel}
                 channelName={currentChannel?.name || "канал"}
+                members={members}
+                isOwner={isServerOwner}
+                showMemberList={showMemberList}
+                onToggleMemberList={() => setShowMemberList(!showMemberList)}
               />
-              <MemberList members={members} onStartDM={handleStartDM} />
+              {showMemberList && <MemberList members={members} onStartDM={handleStartDM} />}
             </>
           )}
         </>
       )}
 
-      {/* Dialogs */}
-      <CreateServerDialog
-        open={showServerDialog}
-        onOpenChange={setShowServerDialog}
-        onServerCreated={fetchServers}
-      />
+      <CreateServerDialog open={showServerDialog} onOpenChange={setShowServerDialog} onServerCreated={fetchServers} />
 
       {selectedServer && (
         <CreateChannelDialog
@@ -253,11 +241,7 @@ const Dashboard = () => {
         />
       )}
 
-      <ServerSearch
-        open={showServerSearch}
-        onOpenChange={setShowServerSearch}
-        onServerJoined={fetchServers}
-      />
+      <ServerSearch open={showServerSearch} onOpenChange={setShowServerSearch} onServerJoined={fetchServers} />
     </div>
   );
 };

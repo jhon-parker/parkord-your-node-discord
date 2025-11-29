@@ -7,8 +7,10 @@ import MediaUpload from "@/components/MediaUpload";
 import MediaPreview from "@/components/MediaPreview";
 import MessageActions from "@/components/MessageActions";
 import UserStatusIndicator from "@/components/UserStatusIndicator";
+import UserProfileCard from "@/components/UserProfileCard";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useNotificationSound } from "@/hooks/useNotificationSound";
 
 interface Message {
   id: string;
@@ -30,10 +32,13 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string>("");
+  const [currentUserAvatar, setCurrentUserAvatar] = useState<string | null>(null);
   const [friendStatus, setFriendStatus] = useState<string>("offline");
   const [friendAvatar, setFriendAvatar] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const { toast } = useToast();
+  const { playNotification } = useNotificationSound();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -45,42 +50,55 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
       fetchMessages();
       fetchFriendProfile();
       const unsub = subscribeToMessages();
-      return unsub;
+      const unsubProfile = subscribeToFriendStatus();
+      return () => {
+        unsub();
+        unsubProfile();
+      };
     }
   }, [friendId, currentUserId]);
 
   const getCurrentUser = async () => {
     const { data: { user } } = await supabase.auth.getUser();
-    if (user) setCurrentUserId(user.id);
+    if (user) {
+      setCurrentUserId(user.id);
+      const { data } = await supabase.from("profiles").select("avatar_url").eq("id", user.id).maybeSingle();
+      if (data) setCurrentUserAvatar(data.avatar_url);
+    }
   };
 
   const fetchFriendProfile = async () => {
-    const { data } = await supabase
-      .from("profiles")
-      .select("status, avatar_url")
-      .eq("id", friendId)
-      .maybeSingle();
+    const { data } = await supabase.from("profiles").select("status, avatar_url").eq("id", friendId).maybeSingle();
     if (data) {
       setFriendStatus(data.status || "offline");
       setFriendAvatar(data.avatar_url);
     }
   };
 
+  const subscribeToFriendStatus = () => {
+    const channel = supabase
+      .channel(`profile:${friendId}`)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "profiles", filter: `id=eq.${friendId}` }, (payload) => {
+        const updated = payload.new as any;
+        setFriendStatus(updated.status || "offline");
+        setFriendAvatar(updated.avatar_url);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  };
+
   const fetchMessages = async () => {
     const { data, error } = await supabase
       .from("direct_messages")
       .select("*")
-      .or(
-        `and(sender_id.eq.${currentUserId},receiver_id.eq.${friendId}),and(sender_id.eq.${friendId},receiver_id.eq.${currentUserId})`
-      )
+      .or(`and(sender_id.eq.${currentUserId},receiver_id.eq.${friendId}),and(sender_id.eq.${friendId},receiver_id.eq.${currentUserId})`)
       .order("created_at", { ascending: true });
 
     if (error) {
-      toast({
-        title: "Ошибка",
-        description: "Не удалось загрузить сообщения",
-        variant: "destructive",
-      });
+      toast({ title: "Ошибка", description: "Не удалось загрузить сообщения", variant: "destructive" });
     } else {
       setMessages(data || []);
       markAsRead();
@@ -99,23 +117,16 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
   const subscribeToMessages = () => {
     const channel = supabase
       .channel(`dm:${friendId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "direct_messages",
-        },
-        (payload) => {
-          const msg = payload.new as Message;
-          if (
-            (msg?.sender_id === currentUserId && msg?.receiver_id === friendId) ||
-            (msg?.sender_id === friendId && msg?.receiver_id === currentUserId)
-          ) {
-            fetchMessages();
+      .on("postgres_changes", { event: "*", schema: "public", table: "direct_messages" }, (payload) => {
+        const msg = payload.new as Message;
+        if ((msg?.sender_id === currentUserId && msg?.receiver_id === friendId) || (msg?.sender_id === friendId && msg?.receiver_id === currentUserId)) {
+          if (payload.eventType === "INSERT" && msg.sender_id !== currentUserId) {
+            playNotification();
           }
+          fetchMessages();
         }
-      )
+        if (payload.eventType === "DELETE") fetchMessages();
+      })
       .subscribe();
 
     return () => {
@@ -136,11 +147,7 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
     });
 
     if (error) {
-      toast({
-        title: "Ошибка",
-        description: "Не удалось отправить сообщение",
-        variant: "destructive",
-      });
+      toast({ title: "Ошибка", description: "Не удалось отправить сообщение", variant: "destructive" });
     } else {
       setNewMessage("");
       setMediaUrl(null);
@@ -152,14 +159,15 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const isMediaFile = (url: string) => {
-    return url?.match(/\.(jpg|jpeg|png|gif|webp|bmp|mp4|webm|ogg|mov)(\?|$)/i);
-  };
+  const isMediaFile = (url: string) => url?.match(/\.(jpg|jpeg|png|gif|webp|bmp|mp4|webm|ogg|mov)(\?|$)/i);
 
   return (
     <div className="flex-1 flex flex-col bg-background">
       <div className="h-16 border-b border-border flex items-center px-4">
-        <div className="flex items-center gap-3">
+        <div
+          className="flex items-center gap-3 cursor-pointer"
+          onClick={() => setSelectedProfileId(friendId)}
+        >
           <div className="relative">
             {friendAvatar ? (
               <img src={friendAvatar} alt={friendName} className="w-10 h-10 rounded-full object-cover" />
@@ -168,13 +176,10 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
                 {friendName[0].toUpperCase()}
               </div>
             )}
-            <UserStatusIndicator
-              status={friendStatus}
-              className="absolute -bottom-0.5 -right-0.5 border-2 border-background"
-            />
+            <UserStatusIndicator status={friendStatus} className="absolute -bottom-0.5 -right-0.5 border-2 border-background" />
           </div>
           <div>
-            <h3 className="font-bold text-foreground">{friendName}</h3>
+            <h3 className="font-bold text-foreground hover:underline">{friendName}</h3>
             <span className="text-xs text-muted-foreground">
               {friendStatus === "online" ? "В сети" : friendStatus === "idle" ? "Не активен" : friendStatus === "dnd" ? "Не беспокоить" : "Не в сети"}
             </span>
@@ -187,20 +192,31 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
           {messages.map((message) => {
             const isSent = message.sender_id === currentUserId;
             return (
-              <div
-                key={message.id}
-                className={`flex gap-3 group ${isSent ? "flex-row-reverse" : ""}`}
-              >
-                {isSent ? (
-                  <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold flex-shrink-0">Я</div>
-                ) : friendAvatar ? (
-                  <img src={friendAvatar} alt={friendName} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
-                ) : (
-                  <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold flex-shrink-0">{friendName[0].toUpperCase()}</div>
-                )}
+              <div key={message.id} className={`flex gap-3 group ${isSent ? "flex-row-reverse" : ""}`}>
+                <div
+                  className="cursor-pointer"
+                  onClick={() => setSelectedProfileId(isSent ? currentUserId : friendId)}
+                >
+                  {isSent ? (
+                    currentUserAvatar ? (
+                      <img src={currentUserAvatar} alt="Вы" className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+                    ) : (
+                      <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold flex-shrink-0">Я</div>
+                    )
+                  ) : friendAvatar ? (
+                    <img src={friendAvatar} alt={friendName} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold flex-shrink-0">{friendName[0].toUpperCase()}</div>
+                  )}
+                </div>
                 <div className={`flex flex-col ${isSent ? "items-end" : "items-start"}`}>
                   <div className="flex items-baseline gap-2">
-                    <span className="font-semibold text-foreground">{isSent ? "Вы" : friendName}</span>
+                    <span
+                      className="font-semibold text-foreground cursor-pointer hover:underline"
+                      onClick={() => setSelectedProfileId(isSent ? currentUserId : friendId)}
+                    >
+                      {isSent ? "Вы" : friendName}
+                    </span>
                     <span className="text-xs text-muted-foreground">
                       {new Date(message.created_at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}
                     </span>
@@ -244,8 +260,9 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
         </div>
       </form>
 
-      {previewUrl && (
-        <MediaPreview url={previewUrl} open={!!previewUrl} onOpenChange={(open) => !open && setPreviewUrl(null)} />
+      {previewUrl && <MediaPreview url={previewUrl} open={!!previewUrl} onOpenChange={(open) => !open && setPreviewUrl(null)} />}
+      {selectedProfileId && (
+        <UserProfileCard userId={selectedProfileId} open={!!selectedProfileId} onOpenChange={(open) => !open && setSelectedProfileId(null)} />
       )}
     </div>
   );
