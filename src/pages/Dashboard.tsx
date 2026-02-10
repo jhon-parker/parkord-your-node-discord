@@ -15,6 +15,7 @@ import ServerSettings from "@/components/ServerSettings";
 import UserSettings from "@/components/UserSettings";
 import { supabase } from "@/integrations/supabase/client";
 import { useUserStatus } from "@/hooks/useUserStatus";
+import { useToast } from "@/hooks/use-toast";
 
 type ViewMode = "servers" | "friends";
 
@@ -32,19 +33,15 @@ const Dashboard = () => {
   const [showMemberList, setShowMemberList] = useState(true);
   const [user, setUser] = useState<any>(null);
   const navigate = useNavigate();
+  const { toast } = useToast();
 
   useUserStatus(user?.id || null);
 
-  useEffect(() => {
-    checkAuth();
-  }, []);
+  useEffect(() => { checkAuth(); }, []);
 
   const checkAuth = async () => {
     const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      navigate("/auth");
-      return;
-    }
+    if (!session) { navigate("/auth"); return; }
     setUser(session.user);
     fetchServers();
   };
@@ -52,29 +49,19 @@ const Dashboard = () => {
   const fetchServers = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-
     const { data: memberData } = await supabase.from("server_members").select("server_id").eq("user_id", user.id);
     if (!memberData) return;
-
     const serverIds = memberData.map((m) => m.server_id);
-    if (serverIds.length === 0) {
-      setServers([]);
-      return;
-    }
-
+    if (serverIds.length === 0) { setServers([]); return; }
     const { data } = await supabase.from("servers").select("*").in("id", serverIds).order("created_at", { ascending: true });
     setServers(data || []);
-    if (data && data.length > 0 && !selectedServer) {
-      setSelectedServer(data[0].id);
-    }
+    if (data && data.length > 0 && !selectedServer) setSelectedServer(data[0].id);
   };
 
   const fetchChannels = async (serverId: string) => {
     const { data } = await supabase.from("channels").select("*").eq("server_id", serverId).order("position", { ascending: true });
     setChannels(data || []);
-    if (data && data.length > 0 && !selectedChannel) {
-      setSelectedChannel(data[0].id);
-    }
+    if (data && data.length > 0 && !selectedChannel) setSelectedChannel(data[0].id);
   };
 
   const fetchMembers = async (serverId: string) => {
@@ -83,7 +70,6 @@ const Dashboard = () => {
       .select("user_id, profiles(username, status, avatar_url)")
       .eq("server_id", serverId)
       .limit(50);
-
     setMembers(
       (data || []).map((member: any) => ({
         id: member.user_id,
@@ -100,24 +86,92 @@ const Dashboard = () => {
     fetchServers();
   };
 
+  const handleLeaveServer = async (serverId: string) => {
+    if (!user) return;
+    const { error } = await supabase.from("server_members").delete().eq("server_id", serverId).eq("user_id", user.id);
+    if (!error) {
+      toast({ title: "Вы покинули сервер" });
+      if (selectedServer === serverId) { setSelectedServer(null); setSelectedChannel(null); }
+      fetchServers();
+    }
+  };
+
+  const handleKickUser = async (userId: string) => {
+    if (!selectedServer) return;
+    const { error } = await supabase.from("server_members").delete().eq("server_id", selectedServer).eq("user_id", userId);
+    if (!error) { toast({ title: "Пользователь исключён" }); fetchMembers(selectedServer); }
+  };
+
+  const handleBanUser = async (userId: string) => {
+    if (!selectedServer || !user) return;
+    await supabase.from("server_members").delete().eq("server_id", selectedServer).eq("user_id", userId);
+    await supabase.from("server_bans").insert({ server_id: selectedServer, user_id: userId, banned_by: user.id });
+    toast({ title: "Пользователь забанен" });
+    fetchMembers(selectedServer);
+  };
+
+  const handleSetRole = async (userId: string, role: string) => {
+    if (!selectedServer) return;
+    const { error } = await supabase.from("server_member_roles").upsert(
+      { server_id: selectedServer, user_id: userId, role: role as any },
+      { onConflict: "server_id,user_id" }
+    );
+    if (!error) toast({ title: `Роль назначена: ${role}` });
+  };
+
+  // Realtime: sync members, channels, servers
   useEffect(() => {
     if (selectedServer && viewMode === "servers") {
       fetchChannels(selectedServer);
       fetchMembers(selectedServer);
 
-      // Subscribe to member status updates
-      const channel = supabase
-        .channel(`server-members:${selectedServer}`)
+      const memberChannel = supabase
+        .channel(`server-members-rt:${selectedServer}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "server_members", filter: `server_id=eq.${selectedServer}` }, () => {
+          fetchMembers(selectedServer);
+        })
         .on("postgres_changes", { event: "UPDATE", schema: "public", table: "profiles" }, () => {
           fetchMembers(selectedServer);
         })
         .subscribe();
 
+      const channelSub = supabase
+        .channel(`channels-rt:${selectedServer}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "channels", filter: `server_id=eq.${selectedServer}` }, (payload) => {
+          fetchChannels(selectedServer);
+          if (payload.eventType === "DELETE" && payload.old && (payload.old as any).id === selectedChannel) {
+            setSelectedChannel(null);
+          }
+        })
+        .subscribe();
+
       return () => {
-        supabase.removeChannel(channel);
+        supabase.removeChannel(memberChannel);
+        supabase.removeChannel(channelSub);
       };
     }
   }, [selectedServer, viewMode]);
+
+  // Realtime: sync server list (join/leave/delete)
+  useEffect(() => {
+    if (!user) return;
+    const serverSub = supabase
+      .channel("servers-rt-global")
+      .on("postgres_changes", { event: "*", schema: "public", table: "servers" }, (payload) => {
+        if (payload.eventType === "DELETE" && (payload.old as any)?.id === selectedServer) {
+          setSelectedServer(null);
+          setSelectedChannel(null);
+          toast({ title: "Сервер был удалён" });
+        }
+        fetchServers();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "server_members" }, () => {
+        fetchServers();
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(serverSub); };
+  }, [user, selectedServer]);
 
   const handleSelectServer = (serverId: string) => {
     setSelectedServer(serverId);
@@ -128,6 +182,7 @@ const Dashboard = () => {
 
   const handleStartDM = (friendId: string, friendName: string) => {
     setSelectedDM({ id: friendId, name: friendName });
+    setViewMode("friends");
   };
 
   const currentServer = servers.find((s) => s.id === selectedServer);
@@ -140,10 +195,7 @@ const Dashboard = () => {
     <div className="h-screen flex">
       <div className="w-20 bg-background border-r border-border flex flex-col items-center py-4 space-y-2">
         <button
-          onClick={() => {
-            setViewMode("friends");
-            setSelectedDM(null);
-          }}
+          onClick={() => { setViewMode("friends"); setSelectedDM(null); }}
           className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all ${
             viewMode === "friends" ? "bg-primary text-primary-foreground shadow-glow rounded-xl" : "bg-secondary hover:bg-secondary/80 hover:rounded-xl"
           }`}
@@ -160,7 +212,13 @@ const Dashboard = () => {
 
         <div className="w-full h-px bg-border my-2" />
 
-        <ServerList servers={servers} selectedServer={selectedServer} onSelectServer={handleSelectServer} onCreateServer={() => setShowServerDialog(true)} />
+        <ServerList
+          servers={servers}
+          selectedServer={selectedServer}
+          onSelectServer={handleSelectServer}
+          onCreateServer={() => setShowServerDialog(true)}
+          onLeaveServer={handleLeaveServer}
+        />
 
         <div className="mt-auto pt-2 border-t border-border">
           <UserSettings user={user} onProfileUpdate={() => { if (selectedServer) fetchMembers(selectedServer); }} />
@@ -192,10 +250,7 @@ const Dashboard = () => {
                   isOwner={isServerOwner}
                   onUpdate={() => {
                     fetchServers();
-                    if (selectedServer) {
-                      fetchChannels(selectedServer);
-                      fetchMembers(selectedServer);
-                    }
+                    if (selectedServer) { fetchChannels(selectedServer); fetchMembers(selectedServer); }
                   }}
                   onDelete={handleServerDeleted}
                 />
@@ -224,23 +279,26 @@ const Dashboard = () => {
                 showMemberList={showMemberList}
                 onToggleMemberList={() => setShowMemberList(!showMemberList)}
               />
-              {showMemberList && <MemberList members={members} onStartDM={handleStartDM} />}
+              {showMemberList && (
+                <MemberList
+                  members={members}
+                  onStartDM={handleStartDM}
+                  isOwner={isServerOwner}
+                  onKick={handleKickUser}
+                  onBan={handleBanUser}
+                  onSetRole={handleSetRole}
+                  ownerId={currentServer?.owner_id}
+                />
+              )}
             </>
           )}
         </>
       )}
 
       <CreateServerDialog open={showServerDialog} onOpenChange={setShowServerDialog} onServerCreated={fetchServers} />
-
       {selectedServer && (
-        <CreateChannelDialog
-          open={showChannelDialog}
-          onOpenChange={setShowChannelDialog}
-          serverId={selectedServer}
-          onChannelCreated={() => fetchChannels(selectedServer)}
-        />
+        <CreateChannelDialog open={showChannelDialog} onOpenChange={setShowChannelDialog} serverId={selectedServer} onChannelCreated={() => fetchChannels(selectedServer)} />
       )}
-
       <ServerSearch open={showServerSearch} onOpenChange={setShowServerSearch} onServerJoined={fetchServers} />
     </div>
   );
