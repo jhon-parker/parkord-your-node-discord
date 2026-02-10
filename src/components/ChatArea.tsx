@@ -3,11 +3,21 @@ import { Hash, Send, Pin, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import MediaUpload from "@/components/MediaUpload";
 import MediaPreview from "@/components/MediaPreview";
 import MessageActions from "@/components/MessageActions";
 import PinnedMessages from "@/components/PinnedMessages";
 import UserProfileCard from "@/components/UserProfileCard";
+import EmojiPicker from "@/components/EmojiPicker";
+import MessageReactions from "@/components/MessageReactions";
+import VoiceRecorder from "@/components/VoiceRecorder";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useNotificationSound } from "@/hooks/useNotificationSound";
@@ -48,10 +58,7 @@ const ChatArea = ({ channelId, channelName, members = [], isOwner = false, showM
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    getCurrentUser();
-  }, []);
-
+  useEffect(() => { getCurrentUser(); }, []);
   useEffect(() => {
     fetchMessages();
     const unsub = subscribeToMessages();
@@ -64,17 +71,12 @@ const ChatArea = ({ channelId, channelName, members = [], isOwner = false, showM
   };
 
   const fetchMessages = async () => {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("messages")
       .select("*, profiles(username, avatar_url)")
       .eq("channel_id", channelId)
       .order("created_at", { ascending: true });
-
-    if (error) {
-      toast({ title: "Ошибка", description: "Не удалось загрузить сообщения", variant: "destructive" });
-    } else {
-      setMessages(data || []);
-    }
+    setMessages(data || []);
   };
 
   const subscribeToMessages = () => {
@@ -83,66 +85,62 @@ const ChatArea = ({ channelId, channelName, members = [], isOwner = false, showM
       .on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `channel_id=eq.${channelId}` }, (payload) => {
         if (payload.eventType === "INSERT") {
           const newMsg = payload.new as Message;
-          if (newMsg.user_id !== currentUserId) {
-            playNotification();
-          }
+          if (newMsg.user_id !== currentUserId) playNotification();
         }
         fetchMessages();
       })
       .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   };
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() && !mediaUrl) return;
-
     setLoading(true);
     if (!currentUserId) {
       toast({ title: "Ошибка", description: "Необходимо авторизоваться", variant: "destructive" });
       setLoading(false);
       return;
     }
-
     const { error } = await supabase.from("messages").insert({
       content: newMessage.trim(),
       channel_id: channelId,
       user_id: currentUserId,
       media_url: mediaUrl,
     });
-
-    if (error) {
-      toast({ title: "Ошибка", description: "Не удалось отправить сообщение", variant: "destructive" });
-    } else {
-      setNewMessage("");
-      setMediaUrl(null);
-    }
+    if (!error) { setNewMessage(""); setMediaUrl(null); }
     setLoading(false);
   };
 
   const handlePinMessage = async (messageId: string) => {
-    const { error } = await supabase.from("pinned_messages").insert({
-      message_id: messageId,
-      channel_id: channelId,
-      pinned_by: currentUserId,
-    });
+    const { error } = await supabase.from("pinned_messages").insert({ message_id: messageId, channel_id: channelId, pinned_by: currentUserId });
+    if (!error) toast({ title: "Сообщение закреплено" });
+  };
 
-    if (!error) {
-      toast({ title: "Сообщение закреплено" });
+  const handleDeleteMessage = async (messageId: string) => {
+    await supabase.from("messages").delete().eq("id", messageId);
+  };
+
+  const handleCopyMessage = (content: string) => {
+    navigator.clipboard.writeText(content);
+    toast({ title: "Скопировано" });
+  };
+
+  const handleAddReaction = async (messageId: string, emoji: string) => {
+    const existing = await supabase.from("message_reactions").select("id").eq("message_id", messageId).eq("user_id", currentUserId).eq("emoji", emoji).eq("table_name", "messages").maybeSingle();
+    if (existing.data) {
+      await supabase.from("message_reactions").delete().eq("id", existing.data.id);
+    } else {
+      await supabase.from("message_reactions").insert({ message_id: messageId, user_id: currentUserId, emoji, table_name: "messages" });
     }
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setNewMessage(value);
-
     const lastAtIndex = value.lastIndexOf("@");
     if (lastAtIndex !== -1 && (lastAtIndex === 0 || value[lastAtIndex - 1] === " ")) {
-      const filter = value.slice(lastAtIndex + 1).toLowerCase();
-      setMentionFilter(filter);
+      setMentionFilter(value.slice(lastAtIndex + 1).toLowerCase());
       setShowMentions(true);
     } else {
       setShowMentions(false);
@@ -151,8 +149,7 @@ const ChatArea = ({ channelId, channelName, members = [], isOwner = false, showM
 
   const handleMentionSelect = (username: string) => {
     const lastAtIndex = newMessage.lastIndexOf("@");
-    const newText = newMessage.slice(0, lastAtIndex) + `@${username} `;
-    setNewMessage(newText);
+    setNewMessage(newMessage.slice(0, lastAtIndex) + `@${username} `);
     setShowMentions(false);
     inputRef.current?.focus();
   };
@@ -166,11 +163,7 @@ const ChatArea = ({ channelId, channelName, members = [], isOwner = false, showM
         const username = part.slice(1);
         const member = members.find((m) => m.username.toLowerCase() === username.toLowerCase());
         return (
-          <span
-            key={i}
-            className={`${member ? "bg-primary/20 text-primary cursor-pointer hover:underline" : ""} rounded px-0.5`}
-            onClick={() => member && setSelectedProfileId(member.id)}
-          >
+          <span key={i} className={`${member ? "bg-primary/20 text-primary cursor-pointer hover:underline" : ""} rounded px-0.5`} onClick={() => member && setSelectedProfileId(member.id)}>
             {part}
           </span>
         );
@@ -179,11 +172,10 @@ const ChatArea = ({ channelId, channelName, members = [], isOwner = false, showM
     });
   };
 
-  useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
   const isMediaFile = (url: string) => url?.match(/\.(jpg|jpeg|png|gif|webp|bmp|mp4|webm|ogg|mov)(\?|$)/i);
+  const isAudioFile = (url: string) => url?.match(/\.(webm|mp3|wav|ogg)(\?|$)/i) && !url?.match(/\.(mp4)(\?|$)/i);
 
   return (
     <div className="flex-1 flex flex-col bg-background">
@@ -215,41 +207,66 @@ const ChatArea = ({ channelId, channelName, members = [], isOwner = false, showM
           {messages.map((message) => {
             const isOwn = message.user_id === currentUserId;
             return (
-              <div key={message.id} className="flex gap-3 group">
-                <div className="cursor-pointer" onClick={() => setSelectedProfileId(message.user_id)}>
-                  {message.profiles?.avatar_url ? (
-                    <img src={message.profiles.avatar_url} alt={message.profiles.username} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
-                  ) : (
-                    <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold flex-shrink-0">
-                      {message.profiles?.username?.[0]?.toUpperCase() || "U"}
+              <ContextMenu key={message.id}>
+                <ContextMenuTrigger>
+                  <div className="flex gap-3 group hover:bg-muted/30 rounded-lg p-1 -m-1 transition-colors">
+                    <div className="cursor-pointer" onClick={() => setSelectedProfileId(message.user_id)}>
+                      {message.profiles?.avatar_url ? (
+                        <img src={message.profiles.avatar_url} alt={message.profiles.username} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold flex-shrink-0">
+                          {message.profiles?.username?.[0]?.toUpperCase() || "U"}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-baseline gap-2">
-                    <span className="font-semibold text-foreground cursor-pointer hover:underline" onClick={() => setSelectedProfileId(message.user_id)}>
-                      {message.profiles?.username || "Пользователь"}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(message.created_at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}
-                    </span>
-                    <MessageActions messageId={message.id} content={message.content} isOwn={isOwn} tableName="messages" onUpdate={fetchMessages} />
-                    {isOwner && (
-                      <Button variant="ghost" size="icon" className="h-6 w-6 opacity-0 group-hover:opacity-100" onClick={() => handlePinMessage(message.id)}>
-                        <Pin className="w-3 h-3" />
-                      </Button>
-                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-foreground cursor-pointer hover:underline" onClick={() => setSelectedProfileId(message.user_id)}>
+                          {message.profiles?.username || "Пользователь"}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {new Date(message.created_at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                        <div className="ml-auto flex items-center gap-0.5">
+                          <EmojiPicker onSelect={(emoji) => handleAddReaction(message.id, emoji)} />
+                          <MessageActions messageId={message.id} content={message.content} isOwn={isOwn} tableName="messages" onUpdate={fetchMessages} />
+                          {isOwner && (
+                            <Button variant="ghost" size="icon" className="h-6 w-6 opacity-0 group-hover:opacity-100" onClick={() => handlePinMessage(message.id)}>
+                              <Pin className="w-3 h-3" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                      {message.content && <p className="text-foreground mt-1">{renderMessageContent(message.content)}</p>}
+                      {message.media_url && isAudioFile(message.media_url) && (
+                        <audio src={message.media_url} controls className="mt-2 max-w-xs" />
+                      )}
+                      {message.media_url && isMediaFile(message.media_url) && !isAudioFile(message.media_url) && (
+                        message.media_url.match(/\.(mp4|mov)(\?|$)/i) ? (
+                          <video src={message.media_url} controls className="mt-2 max-w-md rounded-lg cursor-pointer hover:opacity-90" onClick={() => setPreviewUrl(message.media_url!)} />
+                        ) : (
+                          <img src={message.media_url} alt="Media" className="mt-2 max-w-md max-h-80 rounded-lg cursor-pointer hover:opacity-90 object-cover" onClick={() => setPreviewUrl(message.media_url!)} />
+                        )
+                      )}
+                      <MessageReactions messageId={message.id} tableName="messages" currentUserId={currentUserId} />
+                    </div>
                   </div>
-                  {message.content && <p className="text-foreground mt-1">{renderMessageContent(message.content)}</p>}
-                  {message.media_url && isMediaFile(message.media_url) && (
-                    message.media_url.match(/\.(mp4|webm|ogg|mov)(\?|$)/i) ? (
-                      <video src={message.media_url} controls className="mt-2 max-w-md rounded-lg cursor-pointer hover:opacity-90" onClick={() => setPreviewUrl(message.media_url!)} />
-                    ) : (
-                      <img src={message.media_url} alt="Media" className="mt-2 max-w-md max-h-80 rounded-lg cursor-pointer hover:opacity-90 object-cover" onClick={() => setPreviewUrl(message.media_url!)} />
-                    )
+                </ContextMenuTrigger>
+                <ContextMenuContent className="bg-popover border-border">
+                  <ContextMenuItem onClick={() => handleAddReaction(message.id, "👍")}>👍 Нравится</ContextMenuItem>
+                  <ContextMenuItem onClick={() => handleAddReaction(message.id, "❤️")}>❤️ Любовь</ContextMenuItem>
+                  <ContextMenuItem onClick={() => handleAddReaction(message.id, "😂")}>😂 Смешно</ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem onClick={() => handleCopyMessage(message.content)}>Копировать текст</ContextMenuItem>
+                  {isOwner && <ContextMenuItem onClick={() => handlePinMessage(message.id)}>📌 Закрепить</ContextMenuItem>}
+                  {isOwn && (
+                    <>
+                      <ContextMenuSeparator />
+                      <ContextMenuItem onClick={() => handleDeleteMessage(message.id)} className="text-destructive">Удалить</ContextMenuItem>
+                    </>
                   )}
-                </div>
-              </div>
+                </ContextMenuContent>
+              </ContextMenu>
             );
           })}
           <div ref={scrollRef} />
@@ -268,7 +285,9 @@ const ChatArea = ({ channelId, channelName, members = [], isOwner = false, showM
         )}
         {mediaUrl && (
           <div className="mb-2 p-2 bg-secondary rounded-lg border border-border relative">
-            {mediaUrl.match(/\.(mp4|webm|ogg|mov)(\?|$)/i) ? (
+            {mediaUrl.match(/\.(webm|mp3|wav|ogg)(\?|$)/i) ? (
+              <audio src={mediaUrl} controls className="w-full" />
+            ) : mediaUrl.match(/\.(mp4|mov)(\?|$)/i) ? (
               <video src={mediaUrl} className="max-h-32 rounded" controls />
             ) : (
               <img src={mediaUrl} alt="Preview" className="max-h-32 rounded" />
@@ -278,6 +297,7 @@ const ChatArea = ({ channelId, channelName, members = [], isOwner = false, showM
         )}
         <div className="flex gap-2">
           <MediaUpload onUpload={setMediaUrl} disabled={loading} />
+          <VoiceRecorder onRecorded={setMediaUrl} disabled={loading} />
           <Input ref={inputRef} value={newMessage} onChange={handleInputChange} placeholder={`Сообщение в #${channelName}`} className="bg-secondary border-border" disabled={loading} />
           <Button type="submit" size="icon" className="bg-primary hover:bg-primary/90 shadow-glow" disabled={loading}>
             <Send className="w-5 h-5" />

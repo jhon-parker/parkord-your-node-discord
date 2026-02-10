@@ -1,11 +1,7 @@
 import { useState, useEffect } from "react";
-import { Settings, Trash2, UserX, Ban, Edit2, X, Upload } from "lucide-react";
+import { Settings, Trash2, UserX, Ban, Edit2, X, Upload, Shield, ShieldCheck } from "lucide-react";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,16 +10,10 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -45,6 +35,7 @@ const ServerSettings = ({ server, channels, members, isOwner, onUpdate, onDelete
   const [isPrivate, setIsPrivate] = useState(server?.is_private || false);
   const [serverIcon, setServerIcon] = useState<string | null>(server?.icon || null);
   const [bannedUsers, setBannedUsers] = useState<any[]>([]);
+  const [roles, setRoles] = useState<any[]>([]);
   const [editingChannel, setEditingChannel] = useState<string | null>(null);
   const [channelName, setChannelName] = useState("");
   const { toast } = useToast();
@@ -56,108 +47,103 @@ const ServerSettings = ({ server, channels, members, isOwner, onUpdate, onDelete
       setIsPrivate(server.is_private || false);
       setServerIcon(server.icon || null);
       fetchBannedUsers();
+      fetchRoles();
     }
   }, [open, server]);
 
   const fetchBannedUsers = async () => {
-    const { data } = await supabase
-      .from("server_bans")
-      .select("*, profiles:user_id(username)")
-      .eq("server_id", server.id);
+    const { data } = await supabase.from("server_bans").select("*, profiles:user_id(username)").eq("server_id", server.id);
     setBannedUsers(data || []);
+  };
+
+  const fetchRoles = async () => {
+    const { data } = await supabase.from("server_member_roles").select("*, profiles:user_id(username)").eq("server_id", server.id);
+    setRoles(data || []);
   };
 
   const handleIconUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    const fileExt = file.name.split(".").pop();
-    const fileName = `server-${server.id}-${Date.now()}.${fileExt}`;
-
-    const { error: uploadError } = await supabase.storage.from("media").upload(fileName, file);
-    if (uploadError) {
-      toast({ title: "Ошибка загрузки", variant: "destructive" });
-      return;
-    }
-
-    const { data: urlData } = supabase.storage.from("media").getPublicUrl(fileName);
-    setServerIcon(urlData.publicUrl);
+    const fileName = `server-${server.id}-${Date.now()}.${file.name.split(".").pop()}`;
+    const { error } = await supabase.storage.from("media").upload(fileName, file);
+    if (error) { toast({ title: "Ошибка загрузки", variant: "destructive" }); return; }
+    const { data } = supabase.storage.from("media").getPublicUrl(fileName);
+    setServerIcon(data.publicUrl);
   };
 
   const handleSaveServer = async () => {
     setLoading(true);
-    const { error } = await supabase
-      .from("servers")
-      .update({ name: serverName, description: serverDescription, is_private: isPrivate, icon: serverIcon })
-      .eq("id", server.id);
-
-    if (error) {
-      toast({ title: "Ошибка", description: "Не удалось сохранить", variant: "destructive" });
-    } else {
-      toast({ title: "Успешно", description: "Сервер обновлён" });
-      onUpdate();
-    }
+    const { error } = await supabase.from("servers").update({ name: serverName, description: serverDescription, is_private: isPrivate, icon: serverIcon }).eq("id", server.id);
+    if (!error) { toast({ title: "Сервер обновлён" }); onUpdate(); }
     setLoading(false);
   };
 
   const handleDeleteServer = async () => {
-    setLoading(true);
     const { error } = await supabase.from("servers").delete().eq("id", server.id);
-    if (error) {
-      toast({ title: "Ошибка", description: "Не удалось удалить сервер", variant: "destructive" });
-    } else {
-      toast({ title: "Успешно", description: "Сервер удалён" });
-      setOpen(false);
-      onDelete();
-    }
-    setLoading(false);
+    if (!error) { toast({ title: "Сервер удалён" }); setOpen(false); onDelete(); }
   };
 
   const handleKickUser = async (userId: string) => {
-    const { error } = await supabase.from("server_members").delete().eq("server_id", server.id).eq("user_id", userId);
-    if (!error) {
-      toast({ title: "Успешно", description: "Пользователь исключён" });
-      onUpdate();
-    }
+    await supabase.from("server_members").delete().eq("server_id", server.id).eq("user_id", userId);
+    toast({ title: "Пользователь исключён" });
+    onUpdate();
   };
 
   const handleBanUser = async (userId: string) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-
     await supabase.from("server_members").delete().eq("server_id", server.id).eq("user_id", userId);
-    const { error } = await supabase.from("server_bans").insert({ server_id: server.id, user_id: userId, banned_by: user.id });
-
-    if (!error) {
-      toast({ title: "Успешно", description: "Пользователь забанен" });
-      fetchBannedUsers();
-      onUpdate();
-    }
+    await supabase.from("server_bans").insert({ server_id: server.id, user_id: userId, banned_by: user.id });
+    toast({ title: "Пользователь забанен" });
+    fetchBannedUsers();
+    onUpdate();
   };
 
   const handleUnbanUser = async (banId: string) => {
-    const { error } = await supabase.from("server_bans").delete().eq("id", banId);
-    if (!error) {
-      toast({ title: "Успешно", description: "Бан снят" });
-      fetchBannedUsers();
+    await supabase.from("server_bans").delete().eq("id", banId);
+    toast({ title: "Бан снят" });
+    fetchBannedUsers();
+  };
+
+  const handleSetRole = async (userId: string, role: string) => {
+    if (role === "member") {
+      await supabase.from("server_member_roles").delete().eq("server_id", server.id).eq("user_id", userId);
+    } else {
+      await supabase.from("server_member_roles").upsert(
+        { server_id: server.id, user_id: userId, role: role as any },
+        { onConflict: "server_id,user_id" }
+      );
     }
+    toast({ title: `Роль обновлена` });
+    fetchRoles();
   };
 
   const handleUpdateChannel = async (channelId: string) => {
     if (!channelName.trim()) return;
-    const { error } = await supabase.from("channels").update({ name: channelName }).eq("id", channelId);
-    if (!error) {
-      toast({ title: "Успешно", description: "Канал обновлён" });
-      setEditingChannel(null);
-      onUpdate();
-    }
+    await supabase.from("channels").update({ name: channelName }).eq("id", channelId);
+    toast({ title: "Канал обновлён" });
+    setEditingChannel(null);
+    onUpdate();
   };
 
   const handleDeleteChannel = async (channelId: string) => {
-    const { error } = await supabase.from("channels").delete().eq("id", channelId);
-    if (!error) {
-      toast({ title: "Успешно", description: "Канал удалён" });
-      onUpdate();
+    await supabase.from("channels").delete().eq("id", channelId);
+    toast({ title: "Канал удалён" });
+    onUpdate();
+  };
+
+  const getMemberRole = (userId: string) => {
+    if (userId === server.owner_id) return "owner";
+    const role = roles.find((r) => r.user_id === userId);
+    return role?.role || "member";
+  };
+
+  const roleLabel = (role: string) => {
+    switch (role) {
+      case "owner": return "👑 Владелец";
+      case "admin": return "🛡️ Админ";
+      case "moderator": return "⚔️ Модератор";
+      default: return "Участник";
     }
   };
 
@@ -180,6 +166,7 @@ const ServerSettings = ({ server, channels, members, isOwner, onUpdate, onDelete
             <TabsTrigger value="general" className="flex-1">Общие</TabsTrigger>
             <TabsTrigger value="channels" className="flex-1">Каналы</TabsTrigger>
             <TabsTrigger value="members" className="flex-1">Участники</TabsTrigger>
+            <TabsTrigger value="roles" className="flex-1">Роли</TabsTrigger>
             <TabsTrigger value="bans" className="flex-1">Баны</TabsTrigger>
           </TabsList>
 
@@ -203,18 +190,10 @@ const ServerSettings = ({ server, channels, members, isOwner, onUpdate, onDelete
                 <Input value={serverName} onChange={(e) => setServerName(e.target.value)} className="bg-secondary border-border" />
               </div>
             </div>
-
             <div className="space-y-2">
               <Label>Описание</Label>
-              <Textarea
-                value={serverDescription}
-                onChange={(e) => setServerDescription(e.target.value)}
-                placeholder="Описание сервера..."
-                className="bg-secondary border-border resize-none"
-                rows={3}
-              />
+              <Textarea value={serverDescription} onChange={(e) => setServerDescription(e.target.value)} placeholder="Описание сервера..." className="bg-secondary border-border resize-none" rows={3} />
             </div>
-
             <div className="flex items-center justify-between">
               <div className="space-y-0.5">
                 <Label>Приватный сервер</Label>
@@ -222,23 +201,16 @@ const ServerSettings = ({ server, channels, members, isOwner, onUpdate, onDelete
               </div>
               <Switch checked={isPrivate} onCheckedChange={setIsPrivate} />
             </div>
-
-            <Button onClick={handleSaveServer} disabled={loading} className="w-full">
-              Сохранить изменения
-            </Button>
-
+            <Button onClick={handleSaveServer} disabled={loading} className="w-full">Сохранить изменения</Button>
             <div className="border-t border-border pt-4">
               <AlertDialog>
                 <AlertDialogTrigger asChild>
-                  <Button variant="destructive" className="w-full">
-                    <Trash2 className="w-4 h-4 mr-2" />
-                    Удалить сервер
-                  </Button>
+                  <Button variant="destructive" className="w-full"><Trash2 className="w-4 h-4 mr-2" />Удалить сервер</Button>
                 </AlertDialogTrigger>
                 <AlertDialogContent className="bg-card border-border">
                   <AlertDialogHeader>
                     <AlertDialogTitle>Удалить сервер?</AlertDialogTitle>
-                    <AlertDialogDescription>Это действие нельзя отменить. Все каналы и сообщения будут удалены.</AlertDialogDescription>
+                    <AlertDialogDescription>Это действие нельзя отменить.</AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Отмена</AlertDialogCancel>
@@ -258,20 +230,14 @@ const ServerSettings = ({ server, channels, members, isOwner, onUpdate, onDelete
                       <div className="flex items-center gap-2 flex-1">
                         <Input value={channelName} onChange={(e) => setChannelName(e.target.value)} className="bg-muted border-border h-8" />
                         <Button size="sm" onClick={() => handleUpdateChannel(channel.id)}>Сохранить</Button>
-                        <Button size="sm" variant="ghost" onClick={() => setEditingChannel(null)}>
-                          <X className="w-4 h-4" />
-                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => setEditingChannel(null)}><X className="w-4 h-4" /></Button>
                       </div>
                     ) : (
                       <>
                         <span className="text-foreground"># {channel.name}</span>
                         <div className="flex gap-1">
-                          <Button size="icon" variant="ghost" onClick={() => { setEditingChannel(channel.id); setChannelName(channel.name); }}>
-                            <Edit2 className="w-4 h-4" />
-                          </Button>
-                          <Button size="icon" variant="ghost" onClick={() => handleDeleteChannel(channel.id)}>
-                            <Trash2 className="w-4 h-4 text-destructive" />
-                          </Button>
+                          <Button size="icon" variant="ghost" onClick={() => { setEditingChannel(channel.id); setChannelName(channel.name); }}><Edit2 className="w-4 h-4" /></Button>
+                          <Button size="icon" variant="ghost" onClick={() => handleDeleteChannel(channel.id)}><Trash2 className="w-4 h-4 text-destructive" /></Button>
                         </div>
                       </>
                     )}
@@ -294,21 +260,48 @@ const ServerSettings = ({ server, channels, members, isOwner, onUpdate, onDelete
                           {member.username?.[0]?.toUpperCase() || "U"}
                         </div>
                       )}
-                      <span className="text-foreground">{member.username}</span>
-                      {member.id === server.owner_id && (
-                        <span className="text-xs bg-primary/20 text-primary px-2 py-0.5 rounded">Владелец</span>
-                      )}
+                      <div>
+                        <span className="text-foreground">{member.username}</span>
+                        <span className="text-xs text-muted-foreground ml-2">{roleLabel(getMemberRole(member.id))}</span>
+                      </div>
                     </div>
                     {member.id !== server.owner_id && (
                       <div className="flex gap-1">
-                        <Button size="sm" variant="ghost" onClick={() => handleKickUser(member.id)}>
-                          <UserX className="w-4 h-4" />
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => handleBanUser(member.id)}>
-                          <Ban className="w-4 h-4 text-destructive" />
-                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => handleKickUser(member.id)}><UserX className="w-4 h-4" /></Button>
+                        <Button size="sm" variant="ghost" onClick={() => handleBanUser(member.id)}><Ban className="w-4 h-4 text-destructive" /></Button>
                       </div>
                     )}
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+          </TabsContent>
+
+          <TabsContent value="roles" className="mt-4">
+            <ScrollArea className="h-64">
+              <div className="space-y-2">
+                {members.filter((m) => m.id !== server.owner_id).map((member) => (
+                  <div key={member.id} className="flex items-center justify-between p-3 bg-secondary rounded-lg">
+                    <div className="flex items-center gap-3">
+                      {member.avatar_url ? (
+                        <img src={member.avatar_url} alt={member.username} className="w-8 h-8 rounded-full object-cover" />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold text-sm">
+                          {member.username?.[0]?.toUpperCase() || "U"}
+                        </div>
+                      )}
+                      <span className="text-foreground">{member.username}</span>
+                    </div>
+                    <Select value={getMemberRole(member.id)} onValueChange={(v) => handleSetRole(member.id, v)}>
+                      <SelectTrigger className="w-40 h-8 bg-muted border-border">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="bg-popover border-border">
+                        <SelectItem value="member">Участник</SelectItem>
+                        <SelectItem value="moderator">⚔️ Модератор</SelectItem>
+                        <SelectItem value="admin">🛡️ Админ</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                 ))}
               </div>
