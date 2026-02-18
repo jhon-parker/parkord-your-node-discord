@@ -16,6 +16,8 @@ import UserSettings from "@/components/UserSettings";
 import { supabase } from "@/integrations/supabase/client";
 import { useUserStatus } from "@/hooks/useUserStatus";
 import { useToast } from "@/hooks/use-toast";
+import { useNotificationSound } from "@/hooks/useNotificationSound";
+import { useRef } from "react";
 
 type ViewMode = "servers" | "friends";
 
@@ -34,8 +36,37 @@ const Dashboard = () => {
   const [user, setUser] = useState<any>(null);
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { playNotification } = useNotificationSound();
+  const selectedChannelRef = useRef<string | null>(null);
+  const selectedDMRef = useRef<{ id: string } | null>(null);
+
+  // Keep refs in sync for notification checks
+  useEffect(() => { selectedChannelRef.current = selectedChannel; }, [selectedChannel]);
+  useEffect(() => { selectedDMRef.current = selectedDM; }, [selectedDM]);
 
   useUserStatus(user?.id || null);
+
+  // Global notification: play sound when message arrives outside current view
+  useEffect(() => {
+    if (!user) return;
+    const notifChannel = supabase
+      .channel("global-notifications")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload) => {
+        const msg = payload.new as any;
+        if (msg.user_id !== user.id && msg.channel_id !== selectedChannelRef.current) {
+          playNotification();
+        }
+      })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "direct_messages" }, (payload) => {
+        const msg = payload.new as any;
+        if (msg.sender_id !== user.id && msg.sender_id !== selectedDMRef.current?.id) {
+          playNotification();
+        }
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(notifChannel); };
+  }, [user]);
 
   useEffect(() => { checkAuth(); }, []);
 
@@ -188,6 +219,19 @@ const Dashboard = () => {
   const currentServer = servers.find((s) => s.id === selectedServer);
   const currentChannel = channels.find((c) => c.id === selectedChannel);
   const isServerOwner = currentServer?.owner_id === user?.id;
+  const [userServerRole, setUserServerRole] = useState<string>("member");
+
+  useEffect(() => {
+    const fetchRole = async () => {
+      if (!selectedServer || !user) { setUserServerRole("member"); return; }
+      if (isServerOwner) { setUserServerRole("owner"); return; }
+      const { data } = await supabase.from("server_member_roles").select("role").eq("server_id", selectedServer).eq("user_id", user.id).maybeSingle();
+      setUserServerRole(data?.role || "member");
+    };
+    fetchRole();
+  }, [selectedServer, user, isServerOwner]);
+
+  const isAdmin = userServerRole === "owner" || userServerRole === "admin";
 
   if (!user) return null;
 
@@ -242,17 +286,18 @@ const Dashboard = () => {
                 ) : null}
                 <h2 className="font-bold text-foreground truncate">{currentServer?.name || "Сервер"}</h2>
               </div>
-              {isServerOwner && (
+              {isAdmin && (
                 <ServerSettings
                   server={currentServer}
                   channels={channels}
                   members={members}
-                  isOwner={isServerOwner}
+                  isOwner={isAdmin}
                   onUpdate={() => {
                     fetchServers();
                     if (selectedServer) { fetchChannels(selectedServer); fetchMembers(selectedServer); }
                   }}
                   onDelete={handleServerDeleted}
+                  onCreateChannel={() => setShowChannelDialog(true)}
                 />
               )}
             </div>
@@ -264,7 +309,7 @@ const Dashboard = () => {
               onSelectChannel={setSelectedChannel}
               onCreateChannel={() => setShowChannelDialog(true)}
               showHeader={false}
-              isOwner={isServerOwner}
+              isOwner={isAdmin}
               onUpdate={() => fetchChannels(selectedServer)}
             />
           </div>
@@ -275,7 +320,7 @@ const Dashboard = () => {
                 channelId={selectedChannel}
                 channelName={currentChannel?.name || "канал"}
                 members={members}
-                isOwner={isServerOwner}
+                isOwner={isAdmin}
                 showMemberList={showMemberList}
                 onToggleMemberList={() => setShowMemberList(!showMemberList)}
               />
@@ -283,7 +328,7 @@ const Dashboard = () => {
                 <MemberList
                   members={members}
                   onStartDM={handleStartDM}
-                  isOwner={isServerOwner}
+                  isOwner={isAdmin}
                   onKick={handleKickUser}
                   onBan={handleBanUser}
                   onSetRole={handleSetRole}

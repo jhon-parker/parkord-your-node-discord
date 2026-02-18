@@ -20,7 +20,7 @@ import MessageReactions from "@/components/MessageReactions";
 import VoiceRecorder from "@/components/VoiceRecorder";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useNotificationSound } from "@/hooks/useNotificationSound";
+
 
 interface Message {
   id: string;
@@ -48,7 +48,7 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const { toast } = useToast();
-  const { playNotification } = useNotificationSound();
+  
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -121,7 +121,6 @@ const DirectMessages = ({ friendId, friendName }: DirectMessagesProps) => {
       .on("postgres_changes", { event: "*", schema: "public", table: "direct_messages" }, (payload) => {
         const msg = payload.new as Message;
         if ((msg?.sender_id === currentUserId && msg?.receiver_id === friendId) || (msg?.sender_id === friendId && msg?.receiver_id === currentUserId)) {
-          if (payload.eventType === "INSERT" && msg.sender_id !== currentUserId) playNotification();
           fetchMessages();
         }
         if (payload.eventType === "DELETE") fetchMessages();

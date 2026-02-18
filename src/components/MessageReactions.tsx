@@ -33,16 +33,26 @@ const MessageReactions = ({ messageId, tableName, currentUserId }: MessageReacti
   const fetchReactions = async () => {
     const { data } = await supabase
       .from("message_reactions")
-      .select("emoji, user_id, profiles:user_id(username)")
+      .select("emoji, user_id")
       .eq("message_id", messageId)
-      .eq("table_name", tableName) as any;
+      .eq("table_name", tableName);
 
     if (!data) return;
+
+    // Collect unique user_ids and fetch their profiles
+    const userIds = [...new Set(data.map((r: any) => r.user_id))];
+    const { data: profiles } = await supabase
+      .from("profiles")
+      .select("id, username")
+      .in("id", userIds);
+
+    const profileMap: Record<string, string> = {};
+    (profiles || []).forEach((p: any) => { profileMap[p.id] = p.username; });
 
     const grouped: Record<string, { users: { id: string; username: string }[] }> = {};
     data.forEach((r: any) => {
       if (!grouped[r.emoji]) grouped[r.emoji] = { users: [] };
-      grouped[r.emoji].users.push({ id: r.user_id, username: r.profiles?.username || "User" });
+      grouped[r.emoji].users.push({ id: r.user_id, username: profileMap[r.user_id] || "User" });
     });
 
     setReactions(

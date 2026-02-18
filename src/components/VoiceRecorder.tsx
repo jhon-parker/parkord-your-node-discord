@@ -1,5 +1,5 @@
-import { useState, useRef } from "react";
-import { Mic, Square, Loader2 } from "lucide-react";
+import { useState, useRef, useCallback } from "react";
+import { Mic, Square, Loader2, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -18,7 +18,7 @@ const VoiceRecorder = ({ onRecorded, disabled }: VoiceRecorderProps) => {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const { toast } = useToast();
 
-  const startRecording = async () => {
+  const startRecording = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream);
@@ -39,13 +39,26 @@ const VoiceRecorder = ({ onRecorded, disabled }: VoiceRecorderProps) => {
     } catch {
       toast({ title: "Ошибка", description: "Нет доступа к микрофону", variant: "destructive" });
     }
-  };
+  }, []);
 
-  const stopRecording = () => {
+  const stopAndSend = useCallback(() => {
     mediaRecorder.current?.stop();
     setRecording(false);
     if (timerRef.current) clearInterval(timerRef.current);
-  };
+  }, []);
+
+  const stopAndCancel = useCallback(() => {
+    if (mediaRecorder.current) {
+      mediaRecorder.current.ondataavailable = null;
+      mediaRecorder.current.onstop = () => {
+        mediaRecorder.current?.stream?.getTracks().forEach((t) => t.stop());
+      };
+      mediaRecorder.current.stop();
+    }
+    setRecording(false);
+    setDuration(0);
+    if (timerRef.current) clearInterval(timerRef.current);
+  }, []);
 
   const uploadVoice = async (blob: Blob) => {
     setUploading(true);
@@ -64,21 +77,24 @@ const VoiceRecorder = ({ onRecorded, disabled }: VoiceRecorderProps) => {
 
   if (uploading) {
     return (
-      <Button variant="ghost" size="icon" disabled>
+      <Button variant="ghost" size="icon" disabled type="button">
         <Loader2 className="w-5 h-5 animate-spin" />
       </Button>
     );
   }
 
   return recording ? (
-    <div className="flex items-center gap-2">
-      <span className="text-xs text-destructive animate-pulse">● {formatTime(duration)}</span>
-      <Button variant="ghost" size="icon" onClick={stopRecording}>
-        <Square className="w-5 h-5 text-destructive" />
+    <div className="flex items-center gap-1">
+      <span className="text-xs text-destructive animate-pulse font-mono">● {formatTime(duration)}</span>
+      <Button variant="ghost" size="icon" onClick={stopAndCancel} type="button" title="Отменить">
+        <Square className="w-4 h-4 text-muted-foreground" />
+      </Button>
+      <Button variant="ghost" size="icon" onClick={stopAndSend} type="button" title="Отправить" className="text-primary">
+        <Send className="w-4 h-4" />
       </Button>
     </div>
   ) : (
-    <Button variant="ghost" size="icon" onClick={startRecording} disabled={disabled}>
+    <Button variant="ghost" size="icon" onClick={startRecording} disabled={disabled} type="button">
       <Mic className="w-5 h-5" />
     </Button>
   );
