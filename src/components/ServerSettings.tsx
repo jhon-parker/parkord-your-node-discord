@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Settings, Trash2, UserX, Ban, Edit2, X, Upload, Shield, ShieldCheck } from "lucide-react";
+import { Settings, Trash2, UserX, Ban, Edit2, X, Upload, Shield, ShieldCheck, Plus, FolderPlus } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
@@ -25,9 +25,10 @@ interface ServerSettingsProps {
   isOwner: boolean;
   onUpdate: () => void;
   onDelete: () => void;
+  onCreateChannel?: () => void;
 }
 
-const ServerSettings = ({ server, channels, members, isOwner, onUpdate, onDelete }: ServerSettingsProps) => {
+const ServerSettings = ({ server, channels, members, isOwner, onUpdate, onDelete, onCreateChannel }: ServerSettingsProps) => {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [serverName, setServerName] = useState(server?.name || "");
@@ -147,6 +148,7 @@ const ServerSettings = ({ server, channels, members, isOwner, onUpdate, onDelete
     }
   };
 
+  // Visible to owners and admins (isOwner is now "isAdmin" from parent)
   if (!isOwner) return null;
 
   return (
@@ -222,6 +224,11 @@ const ServerSettings = ({ server, channels, members, isOwner, onUpdate, onDelete
           </TabsContent>
 
           <TabsContent value="channels" className="mt-4">
+            <div className="flex gap-2 mb-3">
+              <Button size="sm" variant="outline" onClick={() => { if (onCreateChannel) { setOpen(false); onCreateChannel(); } }}>
+                <Plus className="w-4 h-4 mr-1" /> Создать канал
+              </Button>
+            </div>
             <ScrollArea className="h-64">
               <div className="space-y-2">
                 {channels.map((channel) => (

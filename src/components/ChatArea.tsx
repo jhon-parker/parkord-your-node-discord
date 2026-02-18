@@ -20,7 +20,7 @@ import MessageReactions from "@/components/MessageReactions";
 import VoiceRecorder from "@/components/VoiceRecorder";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useNotificationSound } from "@/hooks/useNotificationSound";
+
 
 interface Message {
   id: string;
@@ -54,7 +54,7 @@ const ChatArea = ({ channelId, channelName, members = [], isOwner = false, showM
   const [mentionFilter, setMentionFilter] = useState("");
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const { toast } = useToast();
-  const { playNotification } = useNotificationSound();
+  
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -82,11 +82,7 @@ const ChatArea = ({ channelId, channelName, members = [], isOwner = false, showM
   const subscribeToMessages = () => {
     const channel = supabase
       .channel(`messages:${channelId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `channel_id=eq.${channelId}` }, (payload) => {
-        if (payload.eventType === "INSERT") {
-          const newMsg = payload.new as Message;
-          if (newMsg.user_id !== currentUserId) playNotification();
-        }
+      .on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `channel_id=eq.${channelId}` }, () => {
         fetchMessages();
       })
       .subscribe();
